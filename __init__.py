@@ -9,6 +9,8 @@ import chatgpt_single_registration
 import single_icp
 import time
 
+ImageFileName="testImages"#"LoungeRGBDImages" #"testImages"
+
 def test_visual_sphere_pcl(points,colors,pt1,col1,pt2,col2):
     radius = 100  # 根据点云尺度调整
     sphere = o3d.geometry.TriangleMesh.create_sphere(radius=radius)
@@ -118,8 +120,17 @@ def evaluate_R_t(pts1,pts2,R,t,dis_threshold):
         
 
 def create_single_fragment(data_dir,save_name):
-    intrinsic=o3d.camera.PinholeCameraIntrinsic(o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault)
-    K=intrinsic.intrinsic_matrix
+    #intrinsic=o3d.camera.PinholeCameraIntrinsic(o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault)
+
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(
+        width=1920,
+        height=1200,
+        fx=2427.972163,
+        fy=2428.861606,
+        cx=947.871784,
+        cy=592.184692,
+    )
+    K = intrinsic.intrinsic_matrix
     
     
     color_folder=data_dir / "color"
@@ -127,6 +138,7 @@ def create_single_fragment(data_dir,save_name):
 
     curr_time=time.time()
     files = sorted(p for p in color_folder.iterdir() if p.is_file())# 是否需要对文件排序
+    files_depth = sorted(p for p in depth_folder.iterdir() if p.is_file())# 是否需要对文件排序
     file_num=len(files)
     img_size=single_fragment.get_image_size(files[0])
 
@@ -154,12 +166,14 @@ def create_single_fragment(data_dir,save_name):
             compression="lzf",            # 或 "gzip", "blosc"
         )
 
+        # 合并后的点云
+        merged_pcd = o3d.geometry.PointCloud()
+        # 当前帧坐标系 → 第一帧坐标系
+        T_to_first = np.eye(4, dtype=np.float64)
 
         pre_pts=[]
         pre_fpfh=[]
-        for i,file_path in enumerate(files[:2]):
-            path_rgb=str(color_folder / file_path.name)
-            path_depth=str(depth_folder / file_path.name)
+        for i, (path_rgb, path_depth) in enumerate(zip(files[:2], files_depth[:2])):
             # 局部点云
             points0,colors0=single_fragment.estimate_single_fragment(path_rgb,path_depth,K[0][0],K[1][1],K[0][1],K[0][2],K[1][2])
             """ for m in range(len(points)-1):
@@ -182,7 +196,7 @@ def create_single_fragment(data_dir,save_name):
             dset_col[i]=colors """
 
             #降采样
-            s=32
+            s=4
             ds_pts=single_registration.voxel_down_sampling(points,s)
             #计算法向和邻域
             neibor_num=min(len(ds_pts),30)
@@ -232,15 +246,24 @@ def create_single_fragment(data_dir,save_name):
     print("success")
 
 def create_single_fragment_chatgpt(data_dir,save_name):
-    intrinsic=o3d.camera.PinholeCameraIntrinsic(o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault)
-    K=intrinsic.intrinsic_matrix
-    
+    #intrinsic=o3d.camera.PinholeCameraIntrinsic(o3d.camera.PinholeCameraIntrinsicParameters.PrimeSenseDefault)
+
+    intrinsic = o3d.camera.PinholeCameraIntrinsic(
+        width=1920,
+        height=1200,
+        fx=2427.972163,
+        fy=2428.861606,
+        cx=947.871784,
+        cy=592.184692,
+    )
+    K = intrinsic.intrinsic_matrix
     
     color_folder=data_dir / "color"
     depth_folder=data_dir/ "depth"
 
     curr_time=time.time()
     files = sorted(p for p in color_folder.iterdir() if p.is_file())# 是否需要对文件排序
+    files_depth = sorted(p for p in depth_folder.iterdir() if p.is_file())# 是否需要对文件排序
     file_num=len(files)
     img_size=single_fragment.get_image_size(files[0])
 
@@ -269,11 +292,12 @@ def create_single_fragment_chatgpt(data_dir,save_name):
         )
 
 
-        pre_pts=[]
+        """ pre_pts=[]
         pre_fpfh=[]
-        for i,file_path in enumerate(files[:2]):
+        for i,file_path in enumerate(files):
+            file_depth_path=files_depth[i]
             path_rgb=str(color_folder / file_path.name)
-            path_depth=str(depth_folder / file_path.name)
+            path_depth=str(depth_folder / file_depth_path.name)
             # 局部点云
             points,colors=single_fragment.estimate_single_fragment(path_rgb,path_depth,K[0][0],K[1][1],K[0][1],K[0][2],K[1][2])
             if i==0:
@@ -284,27 +308,96 @@ def create_single_fragment_chatgpt(data_dir,save_name):
 
                 # points1、points2 分别来自相邻两帧的 estimate_single_fragment()。
                 # 假设坐标单位为毫米，32 表示 32 mm。
+                s=32
                 result = chatgpt_single_registration.register_two_frames(
                     points1,
                     points,
-                    voxel_size=32.0,
+                    voxel_size=s,
                     refine=True,
-                    visualize=True,
+                    visualize=False,
                 )
 
                 R = result["R"]
                 t = result["t"]
                 T = result["T"]
 
+                e2,fit2=evaluate_R_t(points1,pre_pts[0],R,t,s)
+
                 # 第一帧转换到第二帧坐标系。
-                aligned_points1 = points1 @ R.T + t
+                aligned_points1 = points1 @ R.T + t """
+        s = 32.0
+
+        # 合并后的点云
+        merged_pcd = o3d.geometry.PointCloud()
+
+        # 当前帧坐标系 → 第一帧坐标系
+        T_to_first = np.eye(4, dtype=np.float64)
+
+        previous_points = None
+
+        for i, (rgb_path, depth_path) in enumerate(zip(files[:6], files_depth[:6])):
+            points, colors = single_fragment.estimate_single_fragment(
+                str(rgb_path),
+                str(depth_path),
+                K[0, 0], K[1, 1], K[0, 1],
+                K[0, 2], K[1, 2],
+            )
+
+            # estimate_single_fragment 已经同步过滤无效点和颜色
+            if len(points) < 3:
+                raise ValueError(f"第 {i} 帧有效点不足")
+
+            if previous_points is not None:
+                result = chatgpt_single_registration.register_two_frames(
+                    previous_points,
+                    points,
+                    voxel_size=s,
+                    refine=True,
+                    visualize=False,  # 每次配准不弹窗，最后统一显示
+                )
+
+                # 返回的是：上一帧 → 当前帧
+                T_previous_to_current = result["T"]
+
+                # 累计得到：当前帧 → 第一帧
+                T_to_first = (
+                    T_to_first @ np.linalg.inv(T_previous_to_current)
+                )
+
+            # 创建当前帧彩色点云
+            frame_pcd = o3d.geometry.PointCloud()
+            frame_pcd.points = o3d.utility.Vector3dVector(points)
+            frame_pcd.colors = o3d.utility.Vector3dVector(
+                colors.astype(np.float64) / 255.0
+            )
+
+            # 变换到第一帧坐标系，并加入合并点云
+            frame_pcd.transform(T_to_first)
+            merged_pcd += frame_pcd
+
+            # 保留当前帧原始相机坐标，用于下一次相邻帧配准
+            previous_points = points
+
+            print(
+                f"已处理 {i + 1}/{len(files)} 帧，"
+                f"累计点数：{len(merged_pcd.points)}"
+            )
+
+        # 全部计算结束后，统一显示
+        o3d.visualization.draw_geometries(
+            [merged_pcd],
+            window_name="所有帧拼接结果",
+            width=1280,
+            height=800,
+        )
+
 
     
     
 
 if __name__ == "__main__":
     curr_dir=Path(__file__).parent
-    data_dir=curr_dir / "data" / "LoungeRGBDImages"
+    data_dir=curr_dir / "data" / ImageFileName
     create_single_fragment(data_dir,"single_fragment.h5")
     #create_single_fragment_chatgpt(data_dir,"single_fragment.h5")
     

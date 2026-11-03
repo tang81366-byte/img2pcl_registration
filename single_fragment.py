@@ -73,8 +73,18 @@ def estimate_single_fragment(color_path,depth_path,fx,fy,s,u0,v0):
     Z=depth_np
     points=np.stack([X,Y,Z],axis=-1).reshape(-1,3)
     colors=color_np.reshape(-1,3)
-  
-    return points,colors
+
+    #剔除无效点
+    # 剔除任一坐标含 NaN 或 Inf 的点
+    valid = np.isfinite(points).all(axis=1)
+
+    # 剔除深度为零或负数的点（当前为相机坐标系）
+    valid &= points[:, 2] > 0
+
+    points = points[valid]
+    colors = colors[valid]
+
+    return points, colors
 
 def get_image_size(path):
     img=Image.open(path)

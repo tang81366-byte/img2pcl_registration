@@ -164,7 +164,7 @@ def estimate_fpfh(pt_num,points,normals,neibor_radus,neibor_num=100):
 # 1.计算相邻两帧点云的欧氏距离 return:n*m矩阵
 # (p-q)^2=p^2-2pq+q^2
 # 2.最有匹配点对：每行的最小值同时也是每列的最小值
-def estimate_pairs(points1, points2, fpfh1,fpfh2):
+def estimate_pairs(points1, points2, fpfh1,fpfh2,max_sq_distance=0.02,radio_threshold=0.9):
     n=len(fpfh1)
     m=len(fpfh2)
 
@@ -181,17 +181,31 @@ def estimate_pairs(points1, points2, fpfh1,fpfh2):
     # 浮点运算可能产生极小负值
     np.maximum(distance, 0.0, out=distance)
 
-    # TODO：判断最近和次近是否明显
+    
 
     idx1 = np.argmin(distance, axis=1)
     idx2 = np.argmin(distance, axis=0)
 
     output_pts1=[]
     output_pts2=[]
+
+    count=0;num=0
     for i in range(n):
-        if i==idx2[idx1[i]]:
-            output_pts1.append(points1[i])
-            output_pts2.append(points2[idx1[i]])
+        j=idx1[i]
+        is_mutual = (i == idx2[j])
+        within_threshold = (distance[i, j] <= max_sq_distance)
+
+        if not is_mutual:
+            continue
+
+        # TODO：判断最近和次近是否明显       
+        d2_sq = np.partition(distance[i], 1)[1] # 次小的平方距离
+        count+=1
+        if d2_sq <= 1e-12 or distance[i, j] >= radio_threshold**2 * d2_sq:# 两个候选距离接近时，视为无法区分
+            continue
+        num+=1
+        output_pts1.append(points1[i])
+        output_pts2.append(points2[j])
 
     return np.array(output_pts1),np.array(output_pts2)
 
@@ -226,6 +240,19 @@ def execute_ransac(points1,points2,threshold, p=0.999, max_execute_num=1000):
             else:
                 cross = np.linalg.norm(np.cross(v1, v2))
             return cross / (n1 * n2) < eps
+
+
+        import random
+        execute_count=0
+
+        
+        best_num=0
+        best_error=0
+
+        max_num=100000
+        total_count=0
+
+        # 根据内点比例计算最少抽样次数
         def cal_N(w):
             N=max_execute_num#分母不为0
             if w>=1:
@@ -236,17 +263,10 @@ def execute_ransac(points1,points2,threshold, p=0.999, max_execute_num=1000):
                 N_denominator=math.log(1-w**s)
                 N=math.ceil(math.log(1-p)/N_denominator)
             return N
-
-        import random
-        execute_count=0
-
-        
-        best_num=0
-        best_error=0
-
-        N=max_execute_num
-        while execute_count<min(N,max_execute_num):
+        N=cal_N(0.05)
+        while execute_count<N:#min(N,max_execute_num):
             execute_count+=1
+            total_count+=1
             nos = random.sample(range(feature_num), 3)    
             pts1 = points1[nos]
             pts2 = points2[nos]
